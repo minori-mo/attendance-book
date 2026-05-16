@@ -12,6 +12,7 @@ interface Store {
   subject_attendance: { id: number; student_id: number; date: string; slot_id: number }[];
   date_timetable: { date: string; timetable_id: number }[];
   seq: Record<string, number>;
+  seeded?: boolean;
 }
 
 function defaultStore(): Store {
@@ -19,7 +20,105 @@ function defaultStore(): Store {
     classes: [], students: [], attendance: [], timetables: [],
     timetable_slots: [], subject_attendance: [], date_timetable: [],
     seq: { classes: 1, students: 1, attendance: 1, timetables: 1, timetable_slots: 1, subject_attendance: 1 },
+    seeded: false,
   };
+}
+
+// 過去の平日 N 日分の日付を返す
+function recentWeekdays(n: number): string[] {
+  const dates: string[] = [];
+  const d = new Date();
+  while (dates.length < n) {
+    d.setDate(d.getDate() - 1);
+    if (d.getDay() !== 0 && d.getDay() !== 6) {
+      dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    }
+  }
+  return dates.reverse();
+}
+
+function seedData() {
+  const nid = (t: string) => { const id = store.seq[t] ?? 1; store.seq[t] = id + 1; return id; };
+
+  // ── クラス ────────────────────────────────────────────────
+  const cls1 = { id: nid('classes'), name: 'A組', grade: '1年', timetable_id: null };
+  const cls2 = { id: nid('classes'), name: 'B組', grade: '1年', timetable_id: null };
+  store.classes.push(cls1, cls2);
+
+  // ── 生徒（1年A組）────────────────────────────────────────
+  const aStudents = [
+    '田中 太郎', '佐藤 花子', '鈴木 一郎', '高橋 美咲', '渡辺 健太',
+    '伊藤 さくら', '山本 翔', '中村 愛', '小林 龍', '加藤 奈々',
+  ].map((name, i) => ({ id: nid('students'), class_id: cls1.id, name, student_number: i + 1 }));
+  store.students.push(...aStudents);
+
+  // ── 生徒（1年B組）────────────────────────────────────────
+  const bStudents = [
+    '松本 健一', '井上 由美', '木村 大輔', '林 あかり', '清水 拓也',
+    '池田 莉子', '橋本 隼', '山田 すみれ',
+  ].map((name, i) => ({ id: nid('students'), class_id: cls2.id, name, student_number: i + 1 }));
+  store.students.push(...bStudents);
+
+  // ── 時間割（前期時間割）──────────────────────────────────
+  const tt = { id: nid('timetables'), name: '前期時間割' };
+  store.timetables.push(tt);
+
+  // 曜日(1=月〜6=土) × 時限(1〜6) の授業名
+  const schedule: Record<number, Record<number, string>> = {
+    1: { 1: '国語', 2: '数学', 3: '英語', 4: '理科', 5: '体育', 6: '音楽' },
+    2: { 1: '数学', 2: '英語', 3: '社会', 4: '体育', 5: '国語', 6: '美術' },
+    3: { 1: '英語', 2: '国語', 3: '数学', 4: '音楽', 5: '理科', 6: '社会' },
+    4: { 1: '理科', 2: '社会', 3: '体育', 4: '国語', 5: '数学', 6: '英語' },
+    5: { 1: '体育', 2: '理科', 3: '社会', 4: '英語', 5: '美術', 6: '数学' },
+  };
+  for (const [dow, periods] of Object.entries(schedule)) {
+    for (const [period, subject] of Object.entries(periods)) {
+      store.timetable_slots.push({
+        id: nid('timetable_slots'),
+        timetable_id: tt.id,
+        day_of_week: Number(dow),
+        period: Number(period),
+        subject,
+      });
+    }
+  }
+
+  // ── 出席データ（直近 5 平日）────────────────────────────
+  const days = recentWeekdays(5);
+
+  // 各日に時間割を設定
+  days.forEach(date => store.date_timetable.push({ date, timetable_id: tt.id }));
+
+  // 欠席パターン（生徒インデックス → ステータス）
+  const absencePatterns: { dayIdx: number; studentIdx: number; status: AttendanceStatus; attendedSlots: number[] }[] = [
+    { dayIdx: 0, studentIdx: 1, status: '欠席',  attendedSlots: [] },
+    { dayIdx: 0, studentIdx: 5, status: '遅刻',  attendedSlots: [3, 4, 5] },
+    { dayIdx: 1, studentIdx: 2, status: '欠席',  attendedSlots: [] },
+    { dayIdx: 1, studentIdx: 7, status: '早退',  attendedSlots: [1, 2, 3] },
+    { dayIdx: 2, studentIdx: 0, status: '公欠',  attendedSlots: [1, 2, 3, 4, 5, 6] },
+    { dayIdx: 2, studentIdx: 3, status: '遅刻',  attendedSlots: [4, 5, 6] },
+    { dayIdx: 3, studentIdx: 4, status: '忌引',  attendedSlots: [] },
+    { dayIdx: 3, studentIdx: 6, status: '欠席',  attendedSlots: [] },
+    { dayIdx: 4, studentIdx: 1, status: '遅刻',  attendedSlots: [2, 3, 4, 5, 6] },
+    { dayIdx: 4, studentIdx: 8, status: '早退',  attendedSlots: [1, 2] },
+  ];
+
+  absencePatterns.forEach(({ dayIdx, studentIdx, status, attendedSlots }) => {
+    const date = days[dayIdx];
+    const student = aStudents[studentIdx];
+    if (!student || !date) return;
+
+    store.attendance.push({ id: nid('attendance'), student_id: student.id, date, status });
+
+    const dow = new Date(date).getDay();
+    const daySlots = store.timetable_slots.filter(s => s.timetable_id === tt.id && s.day_of_week === dow);
+    attendedSlots.forEach(period => {
+      const slot = daySlots.find(s => s.period === period);
+      if (slot) store.subject_attendance.push({ id: nid('subject_attendance'), student_id: student.id, date, slot_id: slot.id });
+    });
+  });
+
+  store.seeded = true;
 }
 
 let store: Store;
@@ -29,6 +128,8 @@ try {
 } catch {
   store = defaultStore();
 }
+
+if (!store.seeded) { seedData(); localStorage.setItem(STORE_KEY, JSON.stringify(store)); }
 
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(store)); }
 function nextId(t: string): number { const id = store.seq[t] ?? 1; store.seq[t] = id + 1; return id; }
