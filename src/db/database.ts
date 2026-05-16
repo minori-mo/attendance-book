@@ -188,7 +188,7 @@ export async function getTimetables(): Promise<Timetable[]> {
 export async function addTimetable(name: string): Promise<number> {
   const d = await getDB();
   const result = await d.execute("INSERT INTO timetables (name) VALUES (?)", [name]);
-  return result.lastInsertId;
+  return result.lastInsertId ?? 0;
 }
 
 export async function renameTimetable(id: number, name: string): Promise<void> {
