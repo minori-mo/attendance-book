@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "build:web": "tsc && vite build --mode web",
-    "deploy:web": "npm run build:web && npx gh-pages -d dist"
+    "deploy:web": "gh workflow run deploy.yml"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
