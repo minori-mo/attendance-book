@@ -1,5 +1,5 @@
 // Web デモ用インメモリ DB（localStorage に自動保存）
-import { Class, Student, AttendanceStatus, Timetable, TimetableSlot } from "../types";
+import { Class, Student, AttendanceStatus, Timetable, TimetableSlot, Subject, EffectiveSlot } from "../types";
 
 const STORE_KEY = 'attendance_demo';
 
@@ -8,9 +8,11 @@ interface Store {
   students: { id: number; class_id: number; name: string; student_number: number | null }[];
   attendance: { id: number; student_id: number; date: string; status: string }[];
   timetables: { id: number; name: string }[];
-  timetable_slots: { id: number; timetable_id: number; day_of_week: number; period: number; subject: string }[];
-  subject_attendance: { id: number; student_id: number; date: string; slot_id: number }[];
+  subjects: { id: number; name: string }[];
+  timetable_slots: { id: number; timetable_id: number; day_of_week: number; period: number; subject_id: number }[];
+  subject_attendance: { id: number; student_id: number; date: string; period: number }[];
   date_timetable: { date: string; timetable_id: number }[];
+  date_class_slots: { id: number; date: string; class_id: number; period: number; subject_id: number }[];
   seq: Record<string, number>;
   seeded?: boolean;
 }
@@ -18,8 +20,9 @@ interface Store {
 function defaultStore(): Store {
   return {
     classes: [], students: [], attendance: [], timetables: [],
-    timetable_slots: [], subject_attendance: [], date_timetable: [],
-    seq: { classes: 1, students: 1, attendance: 1, timetables: 1, timetable_slots: 1, subject_attendance: 1 },
+    subjects: [], timetable_slots: [], subject_attendance: [], date_timetable: [],
+    date_class_slots: [],
+    seq: { classes: 1, students: 1, attendance: 1, timetables: 1, subjects: 1, timetable_slots: 1, subject_attendance: 1, date_class_slots: 1 },
     seeded: false,
   };
 }
@@ -39,6 +42,15 @@ function recentWeekdays(n: number): string[] {
 
 function seedData() {
   const nid = (t: string) => { const id = store.seq[t] ?? 1; store.seq[t] = id + 1; return id; };
+
+  // ── 授業登録 ────────────────────────────────────────────────
+  const subjectNames = ['国語', '数学', '英語', '理科', '社会', '体育', '音楽', '美術'];
+  const subjectMap = new Map<string, number>();
+  subjectNames.forEach(name => {
+    const id = nid('subjects');
+    store.subjects.push({ id, name });
+    subjectMap.set(name, id);
+  });
 
   // ── クラス ────────────────────────────────────────────────
   const cls1 = { id: nid('classes'), name: 'A組', grade: '1年', timetable_id: null };
@@ -72,14 +84,17 @@ function seedData() {
     5: { 1: '体育', 2: '理科', 3: '社会', 4: '英語', 5: '美術', 6: '数学' },
   };
   for (const [dow, periods] of Object.entries(schedule)) {
-    for (const [period, subject] of Object.entries(periods)) {
-      store.timetable_slots.push({
-        id: nid('timetable_slots'),
-        timetable_id: tt.id,
-        day_of_week: Number(dow),
-        period: Number(period),
-        subject,
-      });
+    for (const [period, subjectName] of Object.entries(periods)) {
+      const sid = subjectMap.get(subjectName);
+      if (sid !== undefined) {
+        store.timetable_slots.push({
+          id: nid('timetable_slots'),
+          timetable_id: tt.id,
+          day_of_week: Number(dow),
+          period: Number(period),
+          subject_id: sid,
+        });
+      }
     }
   }
 
@@ -90,31 +105,28 @@ function seedData() {
   days.forEach(date => store.date_timetable.push({ date, timetable_id: tt.id }));
 
   // 欠席パターン（生徒インデックス → ステータス）
-  const absencePatterns: { dayIdx: number; studentIdx: number; status: AttendanceStatus; attendedSlots: number[] }[] = [
-    { dayIdx: 0, studentIdx: 1, status: '欠席',  attendedSlots: [] },
-    { dayIdx: 0, studentIdx: 5, status: '遅刻',  attendedSlots: [3, 4, 5] },
-    { dayIdx: 1, studentIdx: 2, status: '欠席',  attendedSlots: [] },
-    { dayIdx: 1, studentIdx: 7, status: '早退',  attendedSlots: [1, 2, 3] },
-    { dayIdx: 2, studentIdx: 0, status: '公欠',  attendedSlots: [1, 2, 3, 4, 5, 6] },
-    { dayIdx: 2, studentIdx: 3, status: '遅刻',  attendedSlots: [4, 5, 6] },
-    { dayIdx: 3, studentIdx: 4, status: '忌引',  attendedSlots: [] },
-    { dayIdx: 3, studentIdx: 6, status: '欠席',  attendedSlots: [] },
-    { dayIdx: 4, studentIdx: 1, status: '遅刻',  attendedSlots: [2, 3, 4, 5, 6] },
-    { dayIdx: 4, studentIdx: 8, status: '早退',  attendedSlots: [1, 2] },
+  const absencePatterns: { dayIdx: number; studentIdx: number; status: AttendanceStatus; attendedPeriods: number[] }[] = [
+    { dayIdx: 0, studentIdx: 1, status: '欠席',  attendedPeriods: [] },
+    { dayIdx: 0, studentIdx: 5, status: '遅刻',  attendedPeriods: [3, 4, 5] },
+    { dayIdx: 1, studentIdx: 2, status: '欠席',  attendedPeriods: [] },
+    { dayIdx: 1, studentIdx: 7, status: '早退',  attendedPeriods: [1, 2, 3] },
+    { dayIdx: 2, studentIdx: 0, status: '公欠',  attendedPeriods: [1, 2, 3, 4, 5, 6] },
+    { dayIdx: 2, studentIdx: 3, status: '遅刻',  attendedPeriods: [4, 5, 6] },
+    { dayIdx: 3, studentIdx: 4, status: '忌引',  attendedPeriods: [] },
+    { dayIdx: 3, studentIdx: 6, status: '欠席',  attendedPeriods: [] },
+    { dayIdx: 4, studentIdx: 1, status: '遅刻',  attendedPeriods: [2, 3, 4, 5, 6] },
+    { dayIdx: 4, studentIdx: 8, status: '早退',  attendedPeriods: [1, 2] },
   ];
 
-  absencePatterns.forEach(({ dayIdx, studentIdx, status, attendedSlots }) => {
+  absencePatterns.forEach(({ dayIdx, studentIdx, status, attendedPeriods }) => {
     const date = days[dayIdx];
     const student = aStudents[studentIdx];
     if (!student || !date) return;
 
     store.attendance.push({ id: nid('attendance'), student_id: student.id, date, status });
 
-    const dow = new Date(date).getDay();
-    const daySlots = store.timetable_slots.filter(s => s.timetable_id === tt.id && s.day_of_week === dow);
-    attendedSlots.forEach(period => {
-      const slot = daySlots.find(s => s.period === period);
-      if (slot) store.subject_attendance.push({ id: nid('subject_attendance'), student_id: student.id, date, slot_id: slot.id });
+    attendedPeriods.forEach(period => {
+      store.subject_attendance.push({ id: nid('subject_attendance'), student_id: student.id, date, period });
     });
   });
 
@@ -124,7 +136,11 @@ function seedData() {
 let store: Store;
 try {
   const raw = localStorage.getItem(STORE_KEY);
-  store = raw ? JSON.parse(raw) : defaultStore();
+  const parsed = raw ? JSON.parse(raw) : null;
+  // date_class_slots がない（旧バージョン）または subject_attendance が slot_id 形式の場合はリセット
+  const isOldFormat = !parsed || !parsed.subjects || parsed.date_class_slots === undefined ||
+    (parsed.subject_attendance?.length > 0 && 'slot_id' in parsed.subject_attendance[0]);
+  store = isOldFormat ? defaultStore() : parsed as Store;
 } catch {
   store = defaultStore();
 }
@@ -151,6 +167,7 @@ export async function deleteClass(id: number): Promise<void> {
   const sids = store.students.filter(s => s.class_id === id).map(s => s.id);
   store.attendance = store.attendance.filter(a => !sids.includes(a.student_id));
   store.subject_attendance = store.subject_attendance.filter(a => !sids.includes(a.student_id));
+  store.date_class_slots = store.date_class_slots.filter(d => d.class_id !== id);
   store.students = store.students.filter(s => s.class_id !== id);
   store.classes = store.classes.filter(c => c.id !== id); save();
 }
@@ -209,18 +226,55 @@ export async function deleteTimetable(id: number): Promise<void> {
   store.timetables = store.timetables.filter(t => t.id !== id); save();
 }
 
+// ── Subjects ──────────────────────────────────────────────────────────────────
+export async function getSubjects(): Promise<Subject[]> {
+  return [...store.subjects].sort((a, b) => a.name.localeCompare(b.name));
+}
+export async function addSubject(name: string): Promise<number> {
+  const id = nextId('subjects'); store.subjects.push({ id, name }); save(); return id;
+}
+export async function updateSubject(id: number, name: string): Promise<void> {
+  const s = store.subjects.find(s => s.id === id); if (s) { s.name = name; save(); }
+}
+export async function deleteSubject(id: number): Promise<void> {
+  store.timetable_slots = store.timetable_slots.filter(s => s.subject_id !== id);
+  store.date_class_slots = store.date_class_slots.filter(d => d.subject_id !== id);
+  store.subjects = store.subjects.filter(s => s.id !== id); save();
+}
+
+// Grid column index → day_of_week (Mon=col0…Sat=col5, Sun=col6)
+const COL_TO_DOW = [1, 2, 3, 4, 5, 6, 0];
+
 // ── Timetable Slots ───────────────────────────────────────────────────────────
 export async function getTimetableSlots(timetableId: number): Promise<TimetableSlot[]> {
   return store.timetable_slots
     .filter(s => s.timetable_id === timetableId)
+    .map(s => ({
+      ...s,
+      subject: store.subjects.find(sub => sub.id === s.subject_id)?.name ?? '',
+    }))
+    .filter(s => s.subject !== '')
     .sort((a, b) => a.day_of_week - b.day_of_week || a.period - b.period);
 }
-export async function saveTimetableGrid(timetableId: number, grid: string[][]): Promise<void> {
-  store.timetable_slots = store.timetable_slots.filter(s => s.timetable_id !== timetableId);
+export async function saveTimetableGrid(timetableId: number, grid: (number | null)[][]): Promise<void> {
   for (let p = 0; p <= 10; p++) {
-    for (let day = 0; day < 6; day++) {
-      const subject = grid[p][day].trim();
-      if (subject) store.timetable_slots.push({ id: nextId('timetable_slots'), timetable_id: timetableId, day_of_week: day + 1, period: p, subject });
+    for (let col = 0; col < 7; col++) {
+      const subjectId = grid[p][col];
+      const dow = COL_TO_DOW[col];
+      if (subjectId !== null) {
+        const existing = store.timetable_slots.find(
+          s => s.timetable_id === timetableId && s.day_of_week === dow && s.period === p
+        );
+        if (existing) {
+          existing.subject_id = subjectId;
+        } else {
+          store.timetable_slots.push({ id: nextId('timetable_slots'), timetable_id: timetableId, day_of_week: dow, period: p, subject_id: subjectId });
+        }
+      } else {
+        store.timetable_slots = store.timetable_slots.filter(
+          s => !(s.timetable_id === timetableId && s.day_of_week === dow && s.period === p)
+        );
+      }
     }
   }
   save();
@@ -238,25 +292,54 @@ export async function setDateTimetable(date: string, timetableId: number | null)
   save();
 }
 
+// ── Date Class Slots (今日だけ変更) ──────────────────────────────────────────
+export async function getDateClassSlotsRange(classId: number, startDate: string, endDate: string): Promise<Map<string, EffectiveSlot[]>> {
+  const map = new Map<string, EffectiveSlot[]>();
+  store.date_class_slots
+    .filter(d => d.class_id === classId && d.date >= startDate && d.date <= endDate)
+    .forEach(d => {
+      const subject = store.subjects.find(s => s.id === d.subject_id)?.name ?? '';
+      if (!subject) return;
+      if (!map.has(d.date)) map.set(d.date, []);
+      map.get(d.date)!.push({ period: d.period, subject });
+    });
+  map.forEach(slots => slots.sort((a, b) => a.period - b.period));
+  return map;
+}
+export async function saveDateClassSlots(date: string, classId: number, slots: { period: number; subjectId: number }[]): Promise<void> {
+  store.date_class_slots = store.date_class_slots.filter(d => !(d.date === date && d.class_id === classId));
+  slots.forEach(slot => {
+    store.date_class_slots.push({ id: nextId('date_class_slots'), date, class_id: classId, period: slot.period, subject_id: slot.subjectId });
+  });
+  save();
+}
+export async function deleteDateClassSlots(date: string, classId: number): Promise<void> {
+  store.date_class_slots = store.date_class_slots.filter(d => !(d.date === date && d.class_id === classId));
+  save();
+}
+
 // ── Subject Attendance ────────────────────────────────────────────────────────
 export async function getSubjectAttendance(studentId: number, date: string): Promise<Set<number>> {
-  const validSlotIds = new Set(store.timetable_slots.map(s => s.id));
-  return new Set(store.subject_attendance.filter(a => a.student_id === studentId && a.date === date && validSlotIds.has(a.slot_id)).map(a => a.slot_id));
+  return new Set(store.subject_attendance.filter(a => a.student_id === studentId && a.date === date).map(a => a.period));
 }
 export async function getSubjectAttendanceSetForRange(classId: number, startDate: string, endDate: string): Promise<Set<string>> {
   const sids = new Set(store.students.filter(s => s.class_id === classId).map(s => s.id));
-  const validSlotIds = new Set(store.timetable_slots.map(s => s.id));
   const set = new Set<string>();
   store.subject_attendance
-    .filter(a => sids.has(a.student_id) && a.date >= startDate && a.date <= endDate && validSlotIds.has(a.slot_id))
-    .forEach(a => set.add(`${a.student_id}_${a.date}_${a.slot_id}`));
+    .filter(a => sids.has(a.student_id) && a.date >= startDate && a.date <= endDate)
+    .forEach(a => set.add(`${a.student_id}_${a.date}_${a.period}`));
   return set;
 }
-export async function toggleSubjectAttendance(studentId: number, date: string, slotId: number, attended: boolean): Promise<void> {
-  store.subject_attendance = store.subject_attendance.filter(a => !(a.student_id === studentId && a.date === date && a.slot_id === slotId));
-  if (attended) store.subject_attendance.push({ id: nextId('subject_attendance'), student_id: studentId, date, slot_id: slotId });
+export async function toggleSubjectAttendance(studentId: number, date: string, period: number, attended: boolean): Promise<void> {
+  store.subject_attendance = store.subject_attendance.filter(a => !(a.student_id === studentId && a.date === date && a.period === period));
+  if (attended) store.subject_attendance.push({ id: nextId('subject_attendance'), student_id: studentId, date, period });
   save();
 }
 export async function clearSubjectAttendanceForDate(date: string): Promise<void> {
   store.subject_attendance = store.subject_attendance.filter(a => a.date !== date); save();
+}
+export async function clearSubjectAttendanceForDateAndClass(date: string, classId: number): Promise<void> {
+  const sids = new Set(store.students.filter(s => s.class_id === classId).map(s => s.id));
+  store.subject_attendance = store.subject_attendance.filter(a => !(a.date === date && sids.has(a.student_id)));
+  save();
 }

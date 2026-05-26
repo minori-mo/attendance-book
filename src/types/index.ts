@@ -26,10 +26,21 @@ export interface Timetable {
   name: string;
 }
 
+export interface Subject {
+  id: number;
+  name: string;
+}
+
 export interface TimetableSlot {
   id: number;
   timetable_id: number;
   day_of_week: number; // 1=月 2=火 3=水 4=木 5=金 6=土
-  period: number;      // 1〜6
+  period: number;
+  subject_id: number;
+  subject: string;     // joined from subjects table
+}
+
+export interface EffectiveSlot {
+  period: number;
   subject: string;
 }

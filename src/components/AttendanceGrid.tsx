@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Class, Student, AttendanceStatus, TimetableSlot, Timetable } from "../types";
+import { Class, Student, AttendanceStatus, TimetableSlot, Timetable, Subject, EffectiveSlot } from "../types";
 import {
   getClasses, getStudents, getAttendanceRange, upsertAttendance,
-  getTimetables, getTimetableSlots,
+  getTimetables, getTimetableSlots, getSubjects,
   getDateTimetables, setDateTimetable,
+  getDateClassSlotsRange, saveDateClassSlots, deleteDateClassSlots,
   getSubjectAttendance, getSubjectAttendanceSetForRange,
-  toggleSubjectAttendance, clearSubjectAttendanceForDate,
+  toggleSubjectAttendance, clearSubjectAttendanceForDate, clearSubjectAttendanceForDateAndClass,
 } from "../db/database";
 
 const STATUSES: { value: AttendanceStatus; label: string; color: string; abbr: string }[] = [
@@ -94,20 +95,25 @@ function AttendanceGrid() {
   const saved = loadSavedState();
   const [classes, setClasses] = useState<Class[]>([]);
   const [timetables, setTimetables] = useState<Timetable[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(saved?.classId ?? null);
   const [startMonth, setStartMonth] = useState(saved?.startMonth ?? currentYearMonth());
   const [endMonth, setEndMonth] = useState(saved?.endMonth ?? currentYearMonth());
   const [students, setStudents] = useState<Student[]>([]);
   const [attendanceMap, setAttendanceMap] = useState<Map<string, AttendanceStatus[]>>(new Map());
   const [dateTimetableMap, setDateTimetableMap] = useState<Map<string, number>>(new Map());
-  const [dateSlots, setDateSlots] = useState<Map<string, TimetableSlot[]>>(new Map());
+  const [dateSlots, setDateSlots] = useState<Map<string, EffectiveSlot[]>>(new Map());
+  const [dateClassSlotsMap, setDateClassSlotsMap] = useState<Map<string, EffectiveSlot[]>>(new Map());
   const [subjectAttendanceSet, setSubjectAttendanceSet] = useState<Set<string>>(new Set());
-  const [showSummary, setShowSummary] = useState(false);
+  const [showSummary, setShowSummary] = useState(true);
 
-  const [popover, setPopover] = useState<{ studentId: number; date: string; x: number; y: number; above: boolean } | null>(null);
-  const [currentDaySlots, setCurrentDaySlots] = useState<TimetableSlot[]>([]);
+  const [popover, setPopover] = useState<{ studentId: number; date: string } | null>(null);
+  const [currentDaySlots, setCurrentDaySlots] = useState<EffectiveSlot[]>([]);
   const [subjectAttended, setSubjectAttended] = useState<Set<number>>(new Set());
   const [headerPopover, setHeaderPopover] = useState<{ date: string; x: number; y: number } | null>(null);
+
+  const [overrideEditor, setOverrideEditor] = useState<{ date: string } | null>(null);
+  const [overrideGrid, setOverrideGrid] = useState<(number | null)[]>(Array(11).fill(null));
 
   const [nameCellLeft, setNameCellLeft] = useState(50);
   const [summaryColLeft, setSummaryColLeft] = useState(150);
@@ -115,14 +121,14 @@ function AttendanceGrid() {
   const numColRef = useRef<HTMLTableCellElement>(null);
   const nameColRef = useRef<HTMLTableCellElement>(null);
   const summaryColRef = useRef<HTMLTableCellElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
   const headerPopoverRef = useRef<HTMLDivElement>(null);
-  const slotsCache = useRef<Map<number, Map<number, TimetableSlot[]>>>(new Map());
+  const slotsCache = useRef<Map<number, Map<number, EffectiveSlot[]>>>(new Map());
 
   useEffect(() => {
-    Promise.all([getClasses(), getTimetables()]).then(([cls, tt]) => {
+    Promise.all([getClasses(), getTimetables(), getSubjects()]).then(([cls, tt, subs]) => {
       setClasses(cls);
       setTimetables(tt);
+      setSubjects(subs);
       if (cls.length > 0 && selectedClassId === null) setSelectedClassId(cls[0].id);
     });
   }, []);
@@ -134,24 +140,31 @@ function AttendanceGrid() {
     }
   }, [selectedClassId, startMonth, endMonth]);
 
-  const loadData = async () => {
-    if (selectedClassId === null) return;
+  const getDateRange = () => {
     const [sy, sm] = startMonth.split('-').map(Number);
     const [ey, em] = endMonth.split('-').map(Number);
     const startDate = `${sy}-${String(sm).padStart(2, '0')}-01`;
     const lastDay = new Date(ey, em, 0).getDate();
     const endDate = `${ey}-${String(em).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    return { startDate, endDate };
+  };
 
-    const [studentList, aMap, dtMap, saSet] = await Promise.all([
+  const loadData = async () => {
+    if (selectedClassId === null) return;
+    const { startDate, endDate } = getDateRange();
+
+    const [studentList, aMap, dtMap, saSet, dcsMap] = await Promise.all([
       getStudents(selectedClassId),
       getAttendanceRange(selectedClassId, startDate, endDate),
       getDateTimetables(startDate, endDate),
       getSubjectAttendanceSetForRange(selectedClassId, startDate, endDate),
+      getDateClassSlotsRange(selectedClassId, startDate, endDate),
     ]);
     setStudents(studentList);
     setAttendanceMap(aMap);
     setDateTimetableMap(dtMap);
     setSubjectAttendanceSet(saSet);
+    setDateClassSlotsMap(dcsMap);
     slotsCache.current.clear();
   };
 
@@ -164,17 +177,18 @@ function AttendanceGrid() {
     setSubjectColLeft(numW + nameW + sumW);
   }, [students, showSummary]);
 
-
   useEffect(() => {
     if (dateTimetableMap.size === 0) { setDateSlots(new Map()); return; }
     const uniqueIds = [...new Set(dateTimetableMap.values())];
     Promise.all(uniqueIds.map(id => getTimetableSlots(id).then(s => ({ id, slots: s }))))
       .then(results => {
         const byTimetable = new Map(results.map(r => [r.id, r.slots]));
-        const ds = new Map<string, TimetableSlot[]>();
+        const ds = new Map<string, EffectiveSlot[]>();
         dateTimetableMap.forEach((ttId, date) => {
           const dow = new Date(date).getDay();
-          ds.set(date, (byTimetable.get(ttId) ?? []).filter(s => s.day_of_week === dow));
+          ds.set(date, (byTimetable.get(ttId) ?? [])
+            .filter((s: TimetableSlot) => s.day_of_week === dow)
+            .map((s: TimetableSlot) => ({ period: s.period, subject: s.subject })));
         });
         setDateSlots(ds);
       });
@@ -182,6 +196,12 @@ function AttendanceGrid() {
 
   useEffect(() => {
     if (!popover) { setCurrentDaySlots([]); setSubjectAttended(new Set()); return; }
+    const overrideSlots = dateClassSlotsMap.get(popover.date);
+    if (overrideSlots) {
+      setCurrentDaySlots(overrideSlots);
+      getSubjectAttendance(popover.studentId, popover.date).then(setSubjectAttended);
+      return;
+    }
     const timetableId = dateTimetableMap.get(popover.date);
     const dow = new Date(popover.date).getDay();
 
@@ -189,10 +209,10 @@ function AttendanceGrid() {
       let byDay = slotsCache.current.get(timetableId!);
       if (!byDay) {
         const slots = await getTimetableSlots(timetableId!);
-        byDay = new Map<number, TimetableSlot[]>();
+        byDay = new Map<number, EffectiveSlot[]>();
         slots.forEach(s => {
           if (!byDay!.has(s.day_of_week)) byDay!.set(s.day_of_week, []);
-          byDay!.get(s.day_of_week)!.push(s);
+          byDay!.get(s.day_of_week)!.push({ period: s.period, subject: s.subject });
         });
         byDay.forEach(list => list.sort((a, b) => a.period - b.period));
         slotsCache.current.set(timetableId!, byDay);
@@ -202,25 +222,35 @@ function AttendanceGrid() {
 
     if (timetableId) loadSlots(); else setCurrentDaySlots([]);
     getSubjectAttendance(popover.studentId, popover.date).then(setSubjectAttended);
-  }, [popover?.studentId, popover?.date, dateTimetableMap]);
+  }, [popover?.studentId, popover?.date, dateTimetableMap, dateClassSlotsMap]);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) setPopover(null);
       if (headerPopoverRef.current && !headerPopoverRef.current.contains(e.target as Node)) setHeaderPopover(null);
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (overrideEditor) { setOverrideEditor(null); return; }
+      if (popover) { setPopover(null); return; }
+      setHeaderPopover(null);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [overrideEditor, popover]);
+
+  const getEffectiveSlots = (date: string): EffectiveSlot[] =>
+    dateClassSlotsMap.get(date) ?? dateSlots.get(date) ?? [];
+
   const handleCellClick = (e: React.MouseEvent, studentId: number, date: string) => {
     e.stopPropagation();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     if (popover?.studentId === studentId && popover?.date === date) { setPopover(null); return; }
-    const above = window.innerHeight - rect.bottom < 260 && rect.top > window.innerHeight - rect.bottom;
-    const x = Math.min(rect.left, window.innerWidth - 200);
     setHeaderPopover(null);
-    setPopover({ studentId, date, x, y: above ? rect.top : rect.bottom + 4, above });
+    setPopover({ studentId, date });
   };
 
   const handleHeaderClick = (e: React.MouseEvent, date: string) => {
@@ -241,6 +271,43 @@ function AttendanceGrid() {
     slotsCache.current.clear();
   };
 
+  const handleOpenOverrideEditor = (date: string) => {
+    const subjectIdByName = new Map(subjects.map(s => [s.name, s.id]));
+    const existingOverride = dateClassSlotsMap.get(date);
+    const source = existingOverride ?? dateSlots.get(date) ?? [];
+    const grid: (number | null)[] = Array(11).fill(null);
+    source.forEach(slot => { grid[slot.period] = subjectIdByName.get(slot.subject) ?? null; });
+    setOverrideGrid(grid);
+    setHeaderPopover(null);
+    setOverrideEditor({ date });
+  };
+
+  const handleSaveOverride = async () => {
+    if (!overrideEditor || selectedClassId === null) return;
+    const slots = overrideGrid
+      .map((subjectId, period) => ({ period, subjectId }))
+      .filter((s): s is { period: number; subjectId: number } => s.subjectId !== null);
+    await saveDateClassSlots(overrideEditor.date, selectedClassId, slots);
+    const { startDate, endDate } = getDateRange();
+    const newMap = await getDateClassSlotsRange(selectedClassId, startDate, endDate);
+    setDateClassSlotsMap(newMap);
+    setOverrideEditor(null);
+  };
+
+  const handleDeleteOverride = async () => {
+    if (!overrideEditor || selectedClassId === null) return;
+    await deleteDateClassSlots(overrideEditor.date, selectedClassId);
+    await clearSubjectAttendanceForDateAndClass(overrideEditor.date, selectedClassId);
+    const { startDate, endDate } = getDateRange();
+    const [newMap, saSet] = await Promise.all([
+      getDateClassSlotsRange(selectedClassId, startDate, endDate),
+      getSubjectAttendanceSetForRange(selectedClassId, startDate, endDate),
+    ]);
+    setDateClassSlotsMap(newMap);
+    setSubjectAttendanceSet(saSet);
+    setOverrideEditor(null);
+  };
+
   const toggleStatus = async (status: AttendanceStatus) => {
     if (!popover) return;
     const key = `${popover.studentId}_${popover.date}`;
@@ -250,26 +317,22 @@ function AttendanceGrid() {
     await upsertAttendance(popover.studentId, popover.date, newStatuses);
   };
 
-  const toggleSubjectAttended = async (slot: TimetableSlot) => {
+  const toggleSubjectAttended = async (slot: EffectiveSlot) => {
     if (!popover) return;
-    const wasAttended = subjectAttended.has(slot.id);
+    const wasAttended = subjectAttended.has(slot.period);
     const next = new Set(subjectAttended);
-    wasAttended ? next.delete(slot.id) : next.add(slot.id);
+    wasAttended ? next.delete(slot.period) : next.add(slot.period);
     setSubjectAttended(next);
-    const rangeKey = `${popover.studentId}_${popover.date}_${slot.id}`;
+    const rangeKey = `${popover.studentId}_${popover.date}_${slot.period}`;
     setSubjectAttendanceSet(prev => { const n = new Set(prev); wasAttended ? n.delete(rangeKey) : n.add(rangeKey); return n; });
-    await toggleSubjectAttendance(popover.studentId, popover.date, slot.id, !wasAttended);
+    await toggleSubjectAttendance(popover.studentId, popover.date, slot.period, !wasAttended);
   };
 
   const handleExportExcel = async () => {
     if (selectedClassId === null) return;
     const cls = classes.find(c => c.id === selectedClassId);
     if (!cls) return;
-    const [sy, sm] = startMonth.split('-').map(Number);
-    const [ey, em] = endMonth.split('-').map(Number);
-    const startDate = `${sy}-${String(sm).padStart(2, '0')}-01`;
-    const lastDay = new Date(ey, em, 0).getDate();
-    const endDate = `${ey}-${String(em).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    const { startDate, endDate } = getDateRange();
     const studentList = await getStudents(selectedClassId);
     const aMap = await getAttendanceRange(selectedClassId, startDate, endDate);
     const allDays = getDaysInRange(startMonth, endMonth);
@@ -287,7 +350,7 @@ function AttendanceGrid() {
     ws['!cols'] = [{ wch: 6 }, { wch: 14 }, ...allDays.map(() => ({ wch: 6 }))];
     XLSX.utils.book_append_sheet(wb, ws, `${cls.grade}${cls.name}`);
 
-    const allSubjects = [...new Set([...dateSlots.values()].flat().map(s => s.subject))].sort();
+    const allSubjects = [...new Set(allDays.flatMap(d => getEffectiveSlots(d.date).map(s => s.subject)))].sort();
     const summaryHeader = ['番号', '氏名', ...STATUSES.map(s => s.label), ...allSubjects];
     const summaryRows = studentList.map(student => {
       const { counts, missedBySubject } = getStudentSummary(student.id);
@@ -312,8 +375,8 @@ function AttendanceGrid() {
       const statuses = attendanceMap.get(`${studentId}_${d.date}`) ?? [];
       statuses.forEach(s => counts[s]++);
       if (statuses.length > 0) {
-        (dateSlots.get(d.date) ?? []).forEach(slot => {
-          if (!subjectAttendanceSet.has(`${studentId}_${d.date}_${slot.id}`)) {
+        getEffectiveSlots(d.date).forEach(slot => {
+          if (!subjectAttendanceSet.has(`${studentId}_${d.date}_${slot.period}`)) {
             missedBySubject.set(slot.subject, (missedBySubject.get(slot.subject) ?? 0) + 1);
           }
         });
@@ -397,17 +460,19 @@ function AttendanceGrid() {
               <tr>
                 {days.map(d => {
                   const hasTimetable = dateTimetableMap.has(d.date);
+                  const hasOverride = dateClassSlotsMap.has(d.date);
                   const ttName = hasTimetable ? timetables.find(t => t.id === dateTimetableMap.get(d.date))?.name ?? '' : '';
                   return (
                     <th
                       key={d.date}
                       className={`col-day clickable${d.date === todayStr ? ' today' : ''}${d.dow === 0 ? ' sunday' : ''}${d.dow === 6 ? ' saturday' : ''}`}
                       onClick={e => handleHeaderClick(e, d.date)}
-                      title={hasTimetable ? `時間割: ${ttName}` : '時間割を設定'}
+                      title={hasOverride ? '時間割を手動で設定済み' : hasTimetable ? `時間割: ${ttName}` : '時間割を設定'}
                     >
                       <div>{d.day}</div>
                       <div className="dow">{WEEKDAYS[d.dow]}</div>
-                      {hasTimetable && <div className="timetable-dot" />}
+                      {hasTimetable && !hasOverride && <div className="timetable-dot" />}
+                      {hasOverride && <div className="timetable-dot override-dot" />}
                     </th>
                   );
                 })}
@@ -473,7 +538,7 @@ function AttendanceGrid() {
       )}
 
       {headerPopover && (
-        <div ref={headerPopoverRef} className="status-popover" style={{ left: headerPopover.x, top: headerPopover.y, minWidth: 180 }}>
+        <div ref={headerPopoverRef} className="status-popover" style={{ left: headerPopover.x, top: headerPopover.y, minWidth: 200 }}>
           <div className="popover-section-title">{headerPopover.date} の時間割</div>
           <select
             style={{ width: '100%', marginTop: 6 }}
@@ -483,41 +548,107 @@ function AttendanceGrid() {
             <option value="">なし</option>
             {timetables.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
+          <button
+            className="override-open-btn"
+            onClick={() => handleOpenOverrideEditor(headerPopover.date)}
+          >
+            時間割を手動で設定
+          </button>
         </div>
       )}
 
-      {popover && (
+      {popover && (() => {
+        const student = students.find(s => s.id === popover.studentId);
+        return (
+          <div
+            className="modal-overlay"
+            onMouseDown={e => { if (e.target === e.currentTarget) setPopover(null); }}
+          >
+            <div className="attendance-modal">
+              <div className="attendance-modal-header">
+                <div>
+                  <div className="attendance-modal-name">{student?.name}</div>
+                  <div className="attendance-modal-date">{popover.date}</div>
+                </div>
+                <button className="help-close-btn" onClick={() => setPopover(null)}>×</button>
+              </div>
+              <div className="attendance-modal-body">
+                <div className="popover-columns">
+                  <div className="popover-col">
+                    <div className="popover-section-title">出欠</div>
+                    {STATUSES.map(s => (
+                      <label key={s.value} className="popover-item">
+                        <input type="checkbox" checked={popoverStatuses.includes(s.value)} onChange={() => toggleStatus(s.value)} />
+                        <span className="status-badge" style={{ background: s.color }}>{s.abbr}</span>
+                        {s.label}
+                      </label>
+                    ))}
+                  </div>
+                  {popoverStatuses.length > 0 && !dateTimetableMap.has(popover.date) && !dateClassSlotsMap.has(popover.date) && (
+                    <>
+                      <div className="popover-col-divider" />
+                      <div className="popover-col">
+                        <p className="popover-no-timetable">時間割を設定すると<br />出席した授業を選べます</p>
+                      </div>
+                    </>
+                  )}
+                  {currentDaySlots.length > 0 && popoverStatuses.length > 0 && (
+                    <>
+                      <div className="popover-col-divider" />
+                      <div className="popover-col">
+                        <div className="popover-section-title">授業出席</div>
+                        {currentDaySlots.map(slot => (
+                          <label key={slot.period} className="popover-item">
+                            <input type="checkbox" checked={subjectAttended.has(slot.period)} onChange={() => toggleSubjectAttended(slot)} />
+                            <span className="popover-period">{slot.period}限</span>
+                            {slot.subject}
+                          </label>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {overrideEditor && (
         <div
-          ref={popoverRef}
-          className="status-popover"
-          style={{ left: popover.x, ...(popover.above ? { bottom: window.innerHeight - popover.y + 4 } : { top: popover.y }) }}
+          className="modal-overlay"
+          onMouseDown={e => { if (e.target === e.currentTarget) setOverrideEditor(null); }}
         >
-          <div className="popover-columns">
-            <div className="popover-col">
-              <div className="popover-section-title">出欠</div>
-              {STATUSES.map(s => (
-                <label key={s.value} className="popover-item">
-                  <input type="checkbox" checked={popoverStatuses.includes(s.value)} onChange={() => toggleStatus(s.value)} />
-                  <span className="status-badge" style={{ background: s.color }}>{s.abbr}</span>
-                  {s.label}
-                </label>
+          <div className="override-editor">
+            <div className="override-editor-header">
+              <h3>{overrideEditor.date} の時間割を手動で設定</h3>
+              <button className="help-close-btn" onClick={() => setOverrideEditor(null)}>×</button>
+            </div>
+            <div className="override-editor-body">
+              <p className="override-editor-hint">この日の時間割を手動で設定します。「なし」にした時限は集計に含まれません。</p>
+              {Array.from({ length: 11 }, (_, p) => (
+                <div key={p} className="override-editor-row">
+                  <span className="override-period-label">{p}限</span>
+                  <select
+                    value={overrideGrid[p] ?? ''}
+                    onChange={e => {
+                      const val = e.target.value ? Number(e.target.value) : null;
+                      setOverrideGrid(prev => { const next = [...prev]; next[p] = val; return next; });
+                    }}
+                  >
+                    <option value="">なし</option>
+                    {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
               ))}
             </div>
-            {currentDaySlots.length > 0 && popoverStatuses.length > 0 && (
-              <>
-                <div className="popover-col-divider" />
-                <div className="popover-col">
-                  <div className="popover-section-title">授業出席</div>
-                  {currentDaySlots.map(slot => (
-                    <label key={slot.id} className="popover-item">
-                      <input type="checkbox" checked={subjectAttended.has(slot.id)} onChange={() => toggleSubjectAttended(slot)} />
-                      <span className="popover-period">{slot.period}限</span>
-                      {slot.subject}
-                    </label>
-                  ))}
-                </div>
-              </>
-            )}
+            <div className="override-editor-footer">
+              <button onClick={handleSaveOverride}>保存</button>
+              {dateClassSlotsMap.has(overrideEditor.date) && (
+                <button className="danger" onClick={handleDeleteOverride}>手動設定を削除</button>
+              )}
+              <button className="secondary" onClick={() => setOverrideEditor(null)}>キャンセル</button>
+            </div>
           </div>
         </div>
       )}

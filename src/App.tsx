@@ -4,6 +4,7 @@ import ClassManager from "./components/ClassManager";
 import StudentManager from "./components/StudentManager";
 import TimetableManager from "./components/TimetableManager";
 import AttendanceGrid from "./components/AttendanceGrid";
+import HelpModal from "./components/HelpModal";
 import "./App.css";
 
 type Tab = "attendance" | "classes" | "students" | "timetable";
@@ -21,6 +22,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<Tab>("attendance");
   const [dbReady, setDbReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     getDB()
@@ -43,6 +45,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <h1>出席管理システム</h1>
+        <button className="help-btn" onClick={() => setShowHelp(true)}>？ 使い方</button>
       </header>
       <nav className="app-nav">
         {TABS.map(tab => (
@@ -61,6 +64,7 @@ function App() {
         {activeTab === "students" && <StudentManager />}
         {activeTab === "timetable" && <TimetableManager />}
       </main>
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

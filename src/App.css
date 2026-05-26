@@ -22,11 +22,29 @@ body {
   background: #1565c0;
   color: white;
   padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .app-header h1 {
   font-size: 18px;
   font-weight: bold;
+}
+
+.help-btn {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  padding: 5px 14px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.help-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .app-nav {
@@ -471,9 +489,24 @@ thead .col-name {
   align-items: flex-start;
 }
 
-.timetable-list {
-  width: 180px;
+.timetable-left-panel {
+  width: 200px;
   flex-shrink: 0;
+}
+
+.timetable-list {
+  width: 100%;
+}
+
+.panel-section-title {
+  font-size: 12px;
+  font-weight: bold;
+  color: #1565c0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #90caf9;
 }
 
 .timetable-list-item {
@@ -516,10 +549,36 @@ thead .col-name {
 }
 
 .tg-corner { width: 56px; background: #f5f5f5; }
-.tg-day { width: 110px; text-align: center; background: #e3f2fd; color: #1565c0; font-weight: bold; padding: 6px; }
+.tg-day { width: 100px; text-align: center; background: #e3f2fd; color: #1565c0; font-weight: bold; padding: 6px; }
+.tg-day-sat { background: #e8eaf6; color: #283593; }
+.tg-day-sun { background: #ffebee; color: #c62828; }
 .tg-period { text-align: center; background: #f5f5f5; font-size: 12px; color: #666; white-space: nowrap; padding: 4px 8px; }
-.tg-cell input { width: 100px; border: none; outline: none; padding: 4px 6px; font-size: 14px; background: transparent; }
-.tg-cell input:focus { background: #fffde7; }
+.tg-cell { padding: 2px 4px; }
+.tg-cell-sat { background: #f5f6ff; }
+.tg-cell-sun { background: #fff5f5; }
+.tg-cell select { width: 96px; border: none; outline: none; padding: 4px 6px; font-size: 13px; background: transparent; cursor: pointer; }
+.tg-cell select:focus { background: #fffde7; }
+.tg-cell select:disabled { cursor: not-allowed; opacity: 0.4; }
+
+.subject-list { width: 100%; }
+.subject-list-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+  background: white;
+  margin-bottom: 4px;
+}
+.subject-list-name {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
 
 /* Popover sections */
 .popover-section-title {
@@ -557,6 +616,14 @@ thead .col-name {
   font-size: 11px;
   color: #888;
   min-width: 28px;
+}
+
+.popover-no-timetable {
+  font-size: 11px;
+  color: #aaa;
+  line-height: 1.6;
+  white-space: nowrap;
+  padding: 2px 0;
 }
 
 .empty {
@@ -602,4 +669,217 @@ thead .col-name {
   color: #888;
   font-size: 13px;
   margin-top: 8px;
+}
+
+/* Help Modal */
+.help-modal {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  width: 680px;
+  max-width: 94vw;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.help-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+.help-modal-header h2 {
+  font-size: 16px;
+  color: #1565c0;
+  font-weight: bold;
+}
+
+.help-close-btn {
+  background: transparent;
+  color: #666;
+  font-size: 20px;
+  padding: 0 6px;
+  line-height: 1;
+}
+
+.help-close-btn:hover {
+  background: #f5f5f5;
+  color: #333;
+}
+
+.help-modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  line-height: 1.7;
+}
+
+.help-modal-body section {
+  margin-bottom: 24px;
+}
+
+.help-modal-body h3 {
+  font-size: 14px;
+  font-weight: bold;
+  color: #1565c0;
+  border-bottom: 1px solid #90caf9;
+  padding-bottom: 4px;
+  margin-bottom: 10px;
+}
+
+.help-modal-body h4 {
+  font-size: 13px;
+  font-weight: bold;
+  color: #444;
+  margin: 10px 0 4px;
+}
+
+.help-modal-body ul,
+.help-modal-body ol {
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.help-modal-body li {
+  margin-bottom: 4px;
+}
+
+.help-modal-body table {
+  font-size: 13px;
+  margin: 8px 0;
+  border-radius: 4px;
+}
+
+.help-modal-body th,
+.help-modal-body td {
+  padding: 6px 12px;
+}
+
+/* Attendance modal */
+.attendance-modal {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  width: fit-content;
+  min-width: 280px;
+  max-width: 94vw;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.attendance-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+.attendance-modal-name {
+  font-size: 16px;
+  font-weight: bold;
+  color: #1565c0;
+}
+
+.attendance-modal-date {
+  font-size: 12px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.attendance-modal-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+
+/* Override dot (時間割を手動で設定) */
+.timetable-dot.override-dot {
+  background: #e65100;
+}
+
+/* "時間割を手動で設定" button in header popover */
+.override-open-btn {
+  margin-top: 8px;
+  width: 100%;
+  background: #e65100;
+  font-size: 13px;
+  padding: 5px 10px;
+}
+.override-open-btn:hover {
+  background: #bf360c;
+}
+
+/* Override editor modal */
+.override-editor {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  width: 360px;
+  max-width: 94vw;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.override-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+.override-editor-header h3 {
+  font-size: 15px;
+  color: #1565c0;
+  font-weight: bold;
+}
+
+.override-editor-hint {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.override-editor-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.override-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.override-period-label {
+  font-size: 13px;
+  color: #666;
+  min-width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.override-editor-row select {
+  flex: 1;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.override-editor-footer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid #e0e0e0;
+  flex-shrink: 0;
 }
